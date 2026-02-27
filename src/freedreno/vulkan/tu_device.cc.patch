@@ -1,0 +1,7 @@
+<<<<
+   /* A618-OPT: Hardcoded device name for identity and metadata compliance */
+   strcpy(props->deviceName, "Turnip-Revision-A618-Optimized");
+====
+   /* A618-OPT: Hardcoded device name for identity and metadata compliance */
+   snprintf(props->deviceName, sizeof(props->deviceName), "Turnip-Revision-A618-Optimized");
+>>>>

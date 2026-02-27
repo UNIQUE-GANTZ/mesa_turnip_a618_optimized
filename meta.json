@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "Turnip-Revision-A618-Optimized",
+  "description": "Custom Turnip A618: GMEM-Centric, Hardcoded Binning, FP16-Promoted",
+  "author": "Manus AI",
+  "packageVersion": "1.0",
+  "vendor": "Mesa",
+  "driverVersion": "Vulkan 1.4.340",
+  "minApi": 30,
+  "libraryName": "libvulkan_freedreno.so"
+}
