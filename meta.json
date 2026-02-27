@@ -5,7 +5,7 @@
   "author": "Manus AI",
   "packageVersion": "1.0",
   "vendor": "Mesa",
-  "driverVersion": "Vulkan 1.4.340",
+  "driverVersion": "Vulkan 1.3.270",
   "minApi": 30,
   "libraryName": "libvulkan_freedreno.so"
 }
