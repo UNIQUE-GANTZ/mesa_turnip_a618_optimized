@@ -1229,7 +1229,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
          : VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION);
    props->driverVersion = vk_get_driver_version();
    props->vendorID = pdevice->instance->force_vk_vendor != 0 ?
-                     pdevice->instance->force_vk_vendor : 0x5143;
+                     pdevice->instance->force_vk_vendor : 0x10005;
    props->deviceID = pdevice->dev_id.chip_id;
    props->deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
 
