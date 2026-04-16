@@ -12,8 +12,12 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip python3-yaml libxml2-dev bison flex
-
+          sudo apt install -y ninja-build pkg-config python3-mako python3-pip python3-yaml libxml2-dev bison flex
+          # Aggiorna Meson all'ultima versione disponibile tramite PIP
+          pip3 install --user --upgrade meson
+          # Aggiunge il percorso di Meson aggiornato al PATH di sistema di GitHub
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
