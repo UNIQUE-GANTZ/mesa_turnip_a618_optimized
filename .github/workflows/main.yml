@@ -26,8 +26,8 @@ jobs:
       - name: Avvia script del progetto
         run: |
           # Sostituisci nome_del_tuo_script.sh con quello vero!
-          chmod +x ./build_turnip.sh.sh
-          ./build_turnip.sh.sh
+          chmod +x ./build_turnip.sh
+          ./build_turnip.sh
 
       - name: Configure and Build
         run: |
