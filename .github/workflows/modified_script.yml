@@ -1,4 +1,4 @@
-name: Build Turnip A618 (Brute Force Mode)
+name: Build Turnip A618 (Ultimate Fix)
 on:
   workflow_dispatch:
 
@@ -14,8 +14,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             python3-pip python3-setuptools python3-mako python3-yaml \
-            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools \
-            unzip wget
+            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools
 
       - name: Update Meson
         run: |
@@ -29,36 +28,41 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Inject Android Headers & Stubs
+      - name: Manual Header & PkgConfig Injection
         run: |
-          # 1. Scarichiamo gli header di Android che mancano nell'NDK (cutils, sync, log)
-          # Usiamo un repository di header leggeri per build native
-          wget https://github.com/K11MCH1/android-headers/archive/refs/heads/main.zip
-          unzip main.zip
-          
-          # 2. Creiamo una cartella 'stubs' e copiamo gli header lì dentro
-          mkdir -p $(pwd)/android-stubs/include
-          cp -r android-headers-main/* $(pwd)/android-stubs/include/
-          
-          # 3. Creiamo i file pkg-config dentro la stessa cartella
-          mkdir -p $(pwd)/android-stubs/pkgconfig
+          # 1. Creiamo le cartelle per gli header
+          mkdir -p stubs/include/cutils
+          mkdir -p stubs/include/android
+          mkdir -p stubs/pkgconfig
+
+          # 2. Creiamo un header cutils minimo (stub)
+          cat <<EOF > stubs/include/cutils/native_handle.h
+          #ifndef NATIVE_HANDLE_H
+          #define NATIVE_HANDLE_H
+          typedef struct native_handle {
+              int version;
+              int numFds;
+              int numInts;
+              int data[0];
+          } native_handle_t;
+          #endif
+          EOF
+
+          # 3. Creiamo i file .pc per ingannare Meson
           for lib in libcutils libsync libhardware liblog; do
-            cat <<EOF > $(pwd)/android-stubs/pkgconfig/${lib}.pc
+            cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
           Description: Android ${lib} stub
           Version: 1.0
           Libs: -L${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/33 -lc
-          Cflags: -I$(pwd)/android-stubs/include
+          Cflags: -I$(pwd)/stubs/include
           EOF
           done
 
       - name: Configure and Build
         run: |
-          # Esportiamo i percorsi in modo che Meson DEBBA vederli
-          export PKG_CONFIG_PATH=$(pwd)/android-stubs/pkgconfig
-          export CFLAGS="-I$(pwd)/android-stubs/include $CFLAGS"
-          export CPPFLAGS="-I$(pwd)/android-stubs/include $CPPFLAGS"
-
+          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
+          
           # Creazione cross-file
           cat <<EOF > android-a64.txt
           [binaries]
@@ -70,8 +74,7 @@ jobs:
           glslangValidator = '/usr/bin/glslangValidator'
 
           [properties]
-          # Forziamo Meson a cercare i pacchetti nella nostra cartella stub
-          pkg_config_libdir = '$(pwd)/android-stubs/pkgconfig'
+          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
 
           [host_machine]
           system = 'android'
@@ -93,12 +96,13 @@ jobs:
             -Dgbm=disabled \
             -Dopengl=false \
             -Dgles1=disabled \
-            -Dgles2=disabled
+            -Dgles2=disabled \
+            -Dllvm=disabled
 
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-SuperFixed
+          name: Turnip-A618-Driver
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
