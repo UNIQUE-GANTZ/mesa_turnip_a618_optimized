@@ -1,63 +1,62 @@
 name: Build Turnip A618
 on:
-  workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip python3-yaml libxml2-dev bison flex
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip python3-yaml libxml2-dev bison flex
 
-      # METODO NUOVO: Usa l'action ufficiale per l'NDK
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26b
-          add-to-path: false
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: false
 
-      - name: Configure and Build
-        run: |
-          # Usiamo la variabile ANDROID_NDK_HOME fornita dall'action
-          cat <<EOF > android-a64.txt
-          [binaries]
-          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
-          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
-          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-          pkgconfig = '/usr/bin/pkg-config'
-          [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'armv8-a'
-          endian = 'little'
-          EOF
+      - name: Configure and Build
+        run: |
+          cat <<EOF > android-a64.txt
+          [binaries]
+          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
+          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
+          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8-a'
+          endian = 'little'
+          EOF
 
-          meson setup build_android --cross-file android-a64.txt \
-            -Dvulkan-drivers=freedreno \
-            -Dgallium-drivers="" \
-            -Dplatforms="" \
-            -Dfreedreno-kmds=msm,kgsl \
-            -Dglx=disabled \
-            -Degl=disabled \
-            -Dgbm=disabled \
-            -Dopengl=false \
-            -Dgles1=disabled \
-            -Dgles2=disabled \
-            -Dllvm=disabled \
-            -Dbuildtype=release \
-            -Db_lto=false \
-            -Db_ndebug=true &&\
-          ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
+          meson setup build_android --cross-file android-a64.txt \
+            -Dvulkan-drivers=freedreno \
+            -Dgallium-drivers="" \
+            -Dplatforms=android \
+            -Dfreedreno-kmds=msm,kgsl \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            -Dllvm=disabled \
+            -Dbuildtype=release \
+            -Db_lto=false \
+            -Db_ndebug=true
 
-      - name: Upload Result
-        uses: actions/upload-artifact@v4
-        with:
-          name: driver-turnip-a618
-          path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
+          ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
+
+      - name: Upload Result
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-turnip-a618
+          path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
