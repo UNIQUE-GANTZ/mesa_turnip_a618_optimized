@@ -17,7 +17,7 @@ jobs:
             libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
             libxshmfence-dev libx11-xcb-dev libxrandr-dev libxext-dev \
             libxml2-dev libelf-dev spirv-tools rustc cargo cbindgen ninja-build \
-            glslang-tools  # <--- Questo installa glslangValidator ufficialmente
+            glslang-tools
 
       - name: Update Meson
         run: |
@@ -33,7 +33,7 @@ jobs:
 
       - name: Configure and Build
         run: |
-          # 1. Creazione cross-file
+          # Creazione cross-file
           cat <<EOF > android-a64.txt
           [binaries]
           c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
@@ -41,7 +41,6 @@ jobs:
           ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
           strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
           pkgconfig = '/usr/bin/pkg-config'
-          # Specifichiamo a Meson dove trovare il validator installato con apt
           glslangValidator = '/usr/bin/glslangValidator'
 
           [host_machine]
@@ -51,12 +50,13 @@ jobs:
           endian = 'little'
           EOF
 
-          # 2. Setup Meson
+          # TRUCCO: Disabilitiamo tutto ciò che cerca le librerie di sistema Android (cutils, hardware, log)
+          # Usiamo i flag per una build "Vulkan-only" senza dipendenze AOSP pesanti
           meson setup build_a618 --cross-file android-a64.txt \
-            -Dvulkan-drivers=freedreno \
-            -Dgallium-drivers="" \
             -Dplatforms=android \
+            -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=msm,kgsl \
+            -Dgallium-drivers="" \
             -Dglx=disabled \
             -Degl=disabled \
             -Dgbm=disabled \
@@ -64,18 +64,16 @@ jobs:
             -Dgles1=disabled \
             -Dgles2=disabled \
             -Dllvm=disabled \
+            -Dandroid-libbacktrace=disabled \
+            -Dandroid-strict=false \
             -Dbuildtype=release \
             -Db_lto=false \
             -Db_ndebug=true
 
-          # 3. Compilazione
           ninja -C build_a618 src/freedreno/vulkan/libvulkan_freedreno.so
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Turnip-A618-Driver
-          path: |
-            build_a618/src/freedreno/vulkan/libvulkan_freedreno.so
-            meta.json
-          if-no-files-found: warn
+          path: build_a618/src/freedreno/vulkan/libvulkan_freedreno.so
