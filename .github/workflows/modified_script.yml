@@ -1,46 +1,64 @@
-- name: Nuclear Patch & Stubbing (Cutils Force Fix)
+name: Build Turnip A618 Ultimate Armageddon
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
         run: |
-          # 1. Creazione cartelle (inclusi percorsi multipli per cutils)
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-pip python3-setuptools python3-mako python3-yaml \
+            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools
+
+      - name: Update Meson
+        run: |
+          pip3 install --user --upgrade meson
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: false
+
+      - name: Nuclear Patch & Stubbing (Total Annihilation)
+        run: |
+          # 1. Creazione cartelle Header
           mkdir -p stubs/include/android stubs/include/log stubs/include/cutils stubs/include/hardware stubs/include/sync stubs/include/libdrm stubs/include/udev
           
-          # 2. Stub Header - FORZIAMO CUTILS
+          # 2. Creazione Header Professionali (Stub completi)
           cat <<EOF > stubs/include/cutils/native_handle.h
           #ifndef NATIVE_HANDLE_H
           #define NATIVE_HANDLE_H
           #ifdef __cplusplus
           extern "C" {
           #endif
-          typedef struct native_handle {
-              int version;        /* sizeof(native_handle_t) */
-              int numFds;         /* number of file-descriptors at &data[0] */
-              int numInts;        /* number of ints at &data[numFds] */
-              int data[0];        /* numFds + numInts ints */
-          } native_handle_t;
+          typedef struct native_handle { int version; int numFds; int numInts; int data[0]; } native_handle_t;
           #ifdef __cplusplus
           }
           #endif
           #endif
           EOF
 
-          # Altri header necessari
-          echo "#ifndef SYNC_H #define SYNC_H #include <unistd.h> static inline int sync_wait(int fd, int timeout) { return 0; } #endif" > stubs/include/sync/sync.h
-          echo "#ifndef _DRM_H_ #define _DRM_H_ #include <stdint.h> typedef unsigned int drm_handle_t; #endif" > stubs/include/libdrm/drm.h
-          touch stubs/include/android/native_window.h
-          touch stubs/include/hardware/hardware.h
-          touch stubs/include/udev/libudev.h
-
-          # 3. Creazione file PKG-CONFIG (Raddoppiamo i nomi per sicurezza)
-          mkdir -p stubs/pkgconfig
-          # Ho aggiunto sia 'cutils' che 'libcutils'
-          for lib in cutils libcutils hardware libhardware sync libsync log liblog backtrace libbacktrace unwind libunwind zlib libelf nativewindow libnativewindow android libdrm vulkan libudev spirv-tools; do
-            cat <<EOF > stubs/pkgconfig/${lib}.pc
-          Name: ${lib}
-          Description: Android ${lib} stub
-          Version: 99.0
-          Libs: -lc
-          Cflags: -I$(pwd)/stubs/include
+          cat <<EOF > stubs/include/android/log.h
+          #ifndef ANDROID_LOG_H
+          #define ANDROID_LOG_H
+          typedef enum android_LogPriority { ANDROID_LOG_UNKNOWN = 0, ANDROID_LOG_DEFAULT, ANDROID_LOG_VERBOSE, ANDROID_LOG_DEBUG, ANDROID_LOG_INFO, ANDROID_LOG_WARN, ANDROID_LOG_ERROR, ANDROID_LOG_FATAL, ANDROID_LOG_SILENT } android_LogPriority;
+          #define ALOGV(...) ((void)0)
+          #define ALOGD(...) ((void)0)
+          #define ALOGI(...) ((void)0)
+          #define ALOGW(...) ((void)0)
+          #define ALOGE(...) ((void)0)
+          #define android_printLog(...) (0)
+          #endif
           EOF
-          done
+          cp stubs/include/android/log.h stubs/include/log/log.h
 
-          # 4. Patch dei file Meson (Ancora più aggressiva)
-          find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
+          echo "#ifndef SYNC_H #define SYNC_H #include <unistd.h> static inline int
