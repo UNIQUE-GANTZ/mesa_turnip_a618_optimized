@@ -1,89 +1,58 @@
-name: Build Turnip A618 Final Strike libdrm
+name: Build Turnip A618 Docker Takeover
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Usiamo un'immagine professionale per lo sviluppo Android (Android SDK + NDK)
+    container:
+      image: mingchen/android-build:latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies
+      - name: Install Build Tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update && apt-get install -y \
             python3-pip python3-setuptools python3-mako python3-yaml \
             libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools \
-            gettext git
+            gettext git meson pkg-config
 
-      - name: Update Meson
+      - name: Locate NDK & Libraries
         run: |
-          pip3 install --user --upgrade meson
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          # Individuiamo dove Android tiene i suoi header in questo container
+          # Solitamente: /opt/android-sdk/ndk/<versione>/sysroot
+          export NDK_PATH=$(find /opt -name "ndk" -type d | head -n 1)
+          echo "NDK_FOUND=$NDK_PATH" >> $GITHUB_ENV
 
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26b
-          add-to-path: false
-
-      - name: Download Official Android & Libdrm Headers
-        run: |
-          mkdir -p android-headers/android
-          mkdir -p android-headers/libdrm
-          
-          # Scarichiamo i repository ufficiali di Google AOSP
-          git clone --depth 1 https://android.googlesource.com/platform/system/core android-system-core
-          git clone --depth 1 https://android.googlesource.com/platform/frameworks/native android-frameworks-native
-          git clone --depth 1 https://android.googlesource.com/platform/hardware/libhardware android-libhardware
-          # Scarichiamo libdrm (solo per gli header)
-          git clone --depth 1 https://gitlab.freedesktop.org/mesa/drm.git libdrm-source
-
-          # Copia degli header reali
-          cp -r android-system-core/libutils/include/* android-headers/ || true
-          cp -r android-system-core/libcutils/include/* android-headers/ || true
-          cp -r android-system-core/libsystem/include/* android-headers/ || true
-          cp -r android-frameworks-native/libs/nativewindow/include/* android-headers/ || true
-          cp -r android-frameworks-native/vulkan/include/* android-headers/ || true
-          cp -r android-libhardware/include/* android-headers/ || true
-          # Header di libdrm
-          cp -r libdrm-source/*.h android-headers/ || true
-          cp -r libdrm-source/include/drm/*.h android-headers/libdrm/ || true
-
-          # Fix percorsi standard Mesa
-          cp android-headers/system/window.h android-headers/android/ || true
-          touch android-headers/android/native_window.h
-
-      - name: Create Pkg-Config Stubs (Full List)
+      - name: Create Pkg-Config for Android OS
         run: |
           mkdir -p stubs/pkgconfig
-          # Aggiungiamo libdrm alla lista dei finti pkg-config
-          for lib in cutils libcutils hardware libhardware sync libsync log liblog nativewindow android expat zlib libdrm; do
+          # In un ambiente Android reale, gralloc e cutils sono "fantasmi" 
+          # che Mesa deve linkare. Creiamo gli stub per fargli saltare il controllo.
+          for lib in cutils hardware sync log nativewindow libdrm expat zlib; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
-          Description: Forced Android ${lib}
-          Version: 99
+          Description: Android System Library
+          Version: 33
           Libs: -lc
-          Cflags: -I$(pwd)/android-headers -I$(pwd)/android-headers/libdrm
+          Cflags: -I/usr/include
           EOF
           done
 
-      - name: Configure and Build
+      - name: Configure Mesa
         run: |
-          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
+          # Troviamo il compilatore clang specifico per Android nel container
+          CLANG_PATH=$(find /opt -name "aarch64-linux-android33-clang" | head -n 1)
           
-          # Patch aggressiva per forzare Meson a ignorare i check
-          find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
-          find . -name "meson.build" -exec sed -i "s/dependency('libdrm'/dependency('libdrm', required: false/g" {} +
-
           cat <<EOF > android-a64.txt
           [binaries]
-          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
-          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
-          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          c = '$CLANG_PATH'
+          cpp = '${CLANG_PATH}++'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
           pkgconfig = '/usr/bin/pkg-config'
 
           [properties]
@@ -96,6 +65,9 @@ jobs:
           endian = 'little'
           EOF
 
+          # Patch per ignorare gralloc se manca
+          find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
+
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
@@ -103,19 +75,15 @@ jobs:
             -Dgallium-drivers="" \
             -Dbuildtype=release \
             -Dandroid-libbacktrace=disabled \
-            -Dglx=disabled \
-            -Degl=disabled \
-            -Dgbm=disabled \
-            -Dopengl=false \
             -Dllvm=disabled \
-            -Dcpp_args="-I$(pwd)/android-headers -I$(pwd)/android-headers/libdrm" \
-            -Dc_args="-I$(pwd)/android-headers -I$(pwd)/android-headers/libdrm" \
             -Dwrap_mode=nofallback
 
+      - name: Build
+        run: |
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
-      - name: Upload Driver
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-libdrm-Fix
+          name: Turnip-A618-Docker-Takeover
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
