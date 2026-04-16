@@ -1,29 +1,73 @@
-name: Build Turnip A618 Docker Fixed
+name: Build Turnip A618 Legit Headers
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      # Questa immagine è specifica per compilare Turnip/Mesa per Android
-      image: k11mch1/mesa-android-build:latest 
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-pip python3-setuptools python3-mako python3-yaml \
+            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools \
+            gettext git
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+
+      - name: Download Official Android Headers
+        run: |
+          mkdir -p android-headers/system/core/include
+          mkdir -p android-headers/frameworks/native/libs/nativewindow/include
+          mkdir -p android-headers/frameworks/native/libs/arenderertarget/include
+          mkdir -p android-headers/frameworks/native/headers/hardware_legacy/include
+
+          # Scarichiamo gli header REALI da Google AOSP
+          git clone --depth 1 https://android.googlesource.com/platform/system/core android-system-core
+          git clone --depth 1 https://android.googlesource.com/platform/frameworks/native android-frameworks-native
+          git clone --depth 1 https://android.googlesource.com/platform/hardware/libhardware android-libhardware
+
+          # Organizziamo i file dove Mesa se li aspetta
+          cp -r android-system-core/libutils/include/* android-headers/
+          cp -r android-system-core/libcutils/include/* android-headers/
+          cp -r android-system-core/libsystem/include/* android-headers/
+          cp -r android-frameworks-native/libs/nativewindow/include/* android-headers/
+          cp -r android-frameworks-native/libs/arenderertarget/include/* android-headers/
+          cp -r android-frameworks-native/vulkan/include/* android-headers/
+          cp -r android-libhardware/include/* android-headers/
+
       - name: Configure and Build
         run: |
-          # In questa immagine, l'NDK è già configurato nel PATH
-          # Creiamo il cross-file minimale
-          cat <<EOF > docker-android-a64.txt
+          # Creiamo dei pkg-config minimi che puntano agli header reali appena scaricati
+          mkdir -p stubs/pkgconfig
+          for lib in libcutils libhardware libsync liblog nativewindow; do
+            cat <<EOF > stubs/pkgconfig/${lib}.pc
+          Name: ${lib}
+          Description: Android ${lib} real headers
+          Version: 33
+          Cflags: -I$(pwd)/android-headers
+          EOF
+          done
+
+          # Cross-file che punta all'NDK e ai nostri nuovi header
+          cat <<EOF > android-a64.txt
           [binaries]
-          c = 'aarch64-linux-android33-clang'
-          cpp = 'aarch64-linux-android33-clang++'
-          ar = 'llvm-ar'
-          strip = 'llvm-strip'
-          pkgconfig = 'pkg-config'
+          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
+          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
+          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
+
+          [properties]
+          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
 
           [host_machine]
           system = 'android'
@@ -33,24 +77,21 @@ jobs:
           EOF
 
           # Setup Meson
-          # Nota: In Docker spesso non serve specificare tutto perché l'ambiente è già pronto
-          meson setup build_android --cross-file docker-android-a64.txt \
+          meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=msm,kgsl \
             -Dgallium-drivers="" \
             -Dbuildtype=release \
             -Dandroid-libbacktrace=disabled \
-            -Dglx=disabled \
-            -Degl=disabled \
-            -Dgbm=disabled \
-            -Dopengl=false \
-            -Dllvm=disabled
+            -Dllvm=disabled \
+            -Dcpp_args="-I$(pwd)/android-headers" \
+            -Dc_args="-I$(pwd)/android-headers"
 
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Docker-OK
+          name: Turnip-A618-Legit
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
