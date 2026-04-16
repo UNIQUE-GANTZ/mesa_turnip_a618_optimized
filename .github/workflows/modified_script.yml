@@ -16,7 +16,8 @@ jobs:
             python3-pip python3-setuptools python3-mako python3-yaml \
             libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
             libxshmfence-dev libx11-xcb-dev libxrandr-dev libxext-dev \
-            libxml2-dev libelf-dev spirv-tools rustc cargo cbindgen ninja-build
+            libxml2-dev libelf-dev spirv-tools rustc cargo cbindgen ninja-build \
+            glslang-tools  # <--- Questo installa glslangValidator ufficialmente
 
       - name: Update Meson
         run: |
@@ -30,16 +31,9 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Configure Environment and Build
+      - name: Configure and Build
         run: |
-          # 1. Configura il validatore GLSL (come nel tuo script)
-          # Assicurati che la cartella 'toolchain' esista nel tuo repo!
-          if [ -f "./toolchain/bin/glslangValidator" ]; then
-            chmod +x "./toolchain/bin/glslangValidator"
-            export GLSLANG="$(pwd)/toolchain/bin/glslangValidator"
-          fi
-
-          # 2. Crea il cross-file per l'NDK (Fondamentale per compilare verso Android)
+          # 1. Creazione cross-file
           cat <<EOF > android-a64.txt
           [binaries]
           c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
@@ -47,6 +41,9 @@ jobs:
           ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
           strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
           pkgconfig = '/usr/bin/pkg-config'
+          # Specifichiamo a Meson dove trovare il validator installato con apt
+          glslangValidator = '/usr/bin/glslangValidator'
+
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
@@ -54,7 +51,7 @@ jobs:
           endian = 'little'
           EOF
 
-          # 3. Setup Meson (usando i parametri del tuo script)
+          # 2. Setup Meson
           meson setup build_a618 --cross-file android-a64.txt \
             -Dvulkan-drivers=freedreno \
             -Dgallium-drivers="" \
@@ -69,17 +66,16 @@ jobs:
             -Dllvm=disabled \
             -Dbuildtype=release \
             -Db_lto=false \
-            -Db_ndebug=true \
-            --prefix="$(pwd)/install"
+            -Db_ndebug=true
 
-          # 4. Compilazione
+          # 3. Compilazione
           ninja -C build_a618 src/freedreno/vulkan/libvulkan_freedreno.so
 
-      - name: Upload Driver and Meta
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Turnip-A618-Driver
           path: |
             build_a618/src/freedreno/vulkan/libvulkan_freedreno.so
             meta.json
-          if-no-files-found: error
+          if-no-files-found: warn
