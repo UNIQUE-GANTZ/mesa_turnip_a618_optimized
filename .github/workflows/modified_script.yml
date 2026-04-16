@@ -1,4 +1,4 @@
-name: Build Turnip A618 (Sed Patch Mode)
+name: Build Turnip A618 (Preemptive Strike Mode)
 on:
   workflow_dispatch:
 
@@ -28,15 +28,12 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Nuclear Patch (Remove Cutils Dependency)
+      - name: Preemptive Fixes (Cutils, Hardware, Sync, Log)
         run: |
-          # Questo comando cerca la riga che contiene 'cutils' nel file meson.build 
-          # e la trasforma in una dipendenza vuota/non richiesta.
-          find . -name "meson.build" -exec sed -i "s/dependency('cutils'/dependency('cutils', required : false/g" {} +
-          find . -name "meson.build" -exec sed -i "s/dep_cutils = .*/dep_cutils = []/g" {} +
+          # 1. Creiamo gli HEADER minimi per ingannare il compilatore C++
+          mkdir -p stubs/include/cutils stubs/include/hardware stubs/include/android stubs/include/system
           
-          # Creiamo comunque gli header minimi perché il codice C potrebbe cercarli
-          mkdir -p stubs/include/cutils
+          # Stub per cutils/native_handle.h
           cat <<EOF > stubs/include/cutils/native_handle.h
           #ifndef NATIVE_HANDLE_H
           #define NATIVE_HANDLE_H
@@ -44,9 +41,48 @@ jobs:
           #endif
           EOF
 
+          # Stub per hardware/hardware.h e gralloc.h (spesso richiesti)
+          touch stubs/include/hardware/hardware.h
+          touch stubs/include/hardware/gralloc.h
+          
+          # Stub per log/log.h
+          cat <<EOF > stubs/include/android/log.h
+          #ifndef ANDROID_LOG_H
+          #define ANDROID_LOG_H
+          #define ALOGE(...) ((void)0)
+          #define ALOGW(...) ((void)0)
+          #define ALOGD(...) ((void)0)
+          #define ALOGI(...) ((void)0)
+          #define ALOGV(...) ((void)0)
+          #endif
+          EOF
+          cp stubs/include/android/log.h stubs/include/log/log.h || mkdir -p stubs/include/log && cp stubs/include/android/log.h stubs/include/log/log.h
+
+          # 2. Creiamo i file PKG-CONFIG per ingannare Meson
+          mkdir -p stubs/pkgconfig
+          for lib in libcutils libhardware libsync liblog libbacktrace; do
+            cat <<EOF > stubs/pkgconfig/${lib}.pc
+          Name: ${lib}
+          Description: Android ${lib} stub
+          Version: 1.0
+          Libs: -L${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/33 -lc
+          Cflags: -I$(pwd)/stubs/include
+          EOF
+          done
+
+          # 3. PATCH NUCLEARE: Disabilitiamo i controlli nel codice sorgente
+          # Trasformiamo ogni richiesta di queste librerie in 'non obbligatoria'
+          find . -name "meson.build" -exec sed -i "s/dependency('cutils'/dependency('cutils', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('hardware'/dependency('hardware', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('libsync'/dependency('libsync', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('log'/dependency('log', required : false/g" {} +
+
       - name: Configure and Build
         run: |
-          # Creazione cross-file
+          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
+          export CFLAGS="-I$(pwd)/stubs/include"
+          export CPPFLAGS="-I$(pwd)/stubs/include"
+
           cat <<EOF > android-a64.txt
           [binaries]
           c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
@@ -56,16 +92,15 @@ jobs:
           pkgconfig = '/usr/bin/pkg-config'
           glslangValidator = '/usr/bin/glslangValidator'
 
+          [properties]
+          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
+
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
           cpu = 'armv8-a'
           endian = 'little'
           EOF
-
-          # Aggiungiamo i nostri stub al percorso di inclusione
-          export CFLAGS="-I$(pwd)/stubs/include"
-          export CPPFLAGS="-I$(pwd)/stubs/include"
 
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
@@ -81,12 +116,13 @@ jobs:
             -Dopengl=false \
             -Dgles1=disabled \
             -Dgles2=disabled \
-            -Dllvm=disabled
+            -Dllvm=disabled \
+            -Db_lto=false
 
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Patched
+          name: Turnip-A618-FullFixed
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
