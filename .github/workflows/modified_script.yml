@@ -1,4 +1,4 @@
-name: Build Turnip A618 (Ultimate Fix)
+name: Build Turnip A618 (Sed Patch Mode)
 on:
   workflow_dispatch:
 
@@ -28,41 +28,24 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Manual Header & PkgConfig Injection
+      - name: Nuclear Patch (Remove Cutils Dependency)
         run: |
-          # 1. Creiamo le cartelle per gli header
+          # Questo comando cerca la riga che contiene 'cutils' nel file meson.build 
+          # e la trasforma in una dipendenza vuota/non richiesta.
+          find . -name "meson.build" -exec sed -i "s/dependency('cutils'/dependency('cutils', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dep_cutils = .*/dep_cutils = []/g" {} +
+          
+          # Creiamo comunque gli header minimi perché il codice C potrebbe cercarli
           mkdir -p stubs/include/cutils
-          mkdir -p stubs/include/android
-          mkdir -p stubs/pkgconfig
-
-          # 2. Creiamo un header cutils minimo (stub)
           cat <<EOF > stubs/include/cutils/native_handle.h
           #ifndef NATIVE_HANDLE_H
           #define NATIVE_HANDLE_H
-          typedef struct native_handle {
-              int version;
-              int numFds;
-              int numInts;
-              int data[0];
-          } native_handle_t;
+          typedef struct native_handle { int version; int numFds; int numInts; int data[0]; } native_handle_t;
           #endif
           EOF
 
-          # 3. Creiamo i file .pc per ingannare Meson
-          for lib in libcutils libsync libhardware liblog; do
-            cat <<EOF > stubs/pkgconfig/${lib}.pc
-          Name: ${lib}
-          Description: Android ${lib} stub
-          Version: 1.0
-          Libs: -L${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/33 -lc
-          Cflags: -I$(pwd)/stubs/include
-          EOF
-          done
-
       - name: Configure and Build
         run: |
-          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
-          
           # Creazione cross-file
           cat <<EOF > android-a64.txt
           [binaries]
@@ -73,15 +56,16 @@ jobs:
           pkgconfig = '/usr/bin/pkg-config'
           glslangValidator = '/usr/bin/glslangValidator'
 
-          [properties]
-          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
-
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
           cpu = 'armv8-a'
           endian = 'little'
           EOF
+
+          # Aggiungiamo i nostri stub al percorso di inclusione
+          export CFLAGS="-I$(pwd)/stubs/include"
+          export CPPFLAGS="-I$(pwd)/stubs/include"
 
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
@@ -104,5 +88,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Driver
+          name: Turnip-A618-Patched
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
