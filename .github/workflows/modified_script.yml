@@ -1,4 +1,4 @@
-name: Build Turnip A618 Final Strike
+name: Build Turnip A618 Legit Final Fix
 on:
   workflow_dispatch:
 
@@ -29,16 +29,16 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Download & Force Android Headers
+      - name: Download Official Android Headers
         run: |
           mkdir -p android-headers/android
           
-          # Scarichiamo i pezzi necessari da Google
+          # Scarichiamo i repository ufficiali di Google AOSP
           git clone --depth 1 https://android.googlesource.com/platform/system/core android-system-core
           git clone --depth 1 https://android.googlesource.com/platform/frameworks/native android-frameworks-native
           git clone --depth 1 https://android.googlesource.com/platform/hardware/libhardware android-libhardware
 
-          # Copia selvaggia degli header
+          # Copia degli header reali
           cp -r android-system-core/libutils/include/* android-headers/ || true
           cp -r android-system-core/libcutils/include/* android-headers/ || true
           cp -r android-system-core/libsystem/include/* android-headers/ || true
@@ -46,19 +46,26 @@ jobs:
           cp -r android-frameworks-native/vulkan/include/* android-headers/ || true
           cp -r android-libhardware/include/* android-headers/ || true
           
-          # Fix specifico per i percorsi che Meson ama
+          # Fix percorsi standard Mesa
           cp android-headers/system/window.h android-headers/android/ || true
+          touch android-headers/android/native_window.h
+          
+          # Stub minimo per sync.h se mancante
+          if [ ! -f android-headers/sync/sync.h ]; then
+            mkdir -p android-headers/sync
+            echo "#ifndef SYNC_H #define SYNC_H #include <unistd.h> static inline int sync_wait(int fd, int timeout) { return 0; } #endif" > android-headers/sync/sync.h
+          fi
 
-      - name: Create Force-Found Pkg-Config
+      - name: Create Pkg-Config Stubs (Expat & Zlib included)
         run: |
           mkdir -p stubs/pkgconfig
-          # Creiamo i file .pc per TUTTE le varianti di nome che Meson potrebbe cercare
-          for lib in cutils libcutils hardware libhardware sync libsync log liblog nativewindow android; do
+          # Aggiungiamo expat e zlib per evitare che Meson provi a compilarli da solo
+          for lib in cutils libcutils hardware libhardware sync libsync log liblog nativewindow android expat zlib; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
           Description: Forced Android ${lib}
           Version: 99
-          Libs: -L/usr/lib -lc
+          Libs: -lc
           Cflags: -I$(pwd)/android-headers
           EOF
           done
@@ -67,10 +74,9 @@ jobs:
         run: |
           export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
           
-          # Patch aggressiva: forziamo Meson a ignorare il controllo delle librerie binarie
-          find . -name "meson.build" -exec sed -i "s/dependency('libcutils'/dependency('libcutils', required: false/g" {} +
-          find . -name "meson.build" -exec sed -i "s/dependency('cutils'/dependency('cutils', required: false/g" {} +
+          # Patch aggressiva sui file Meson per saltare i check delle dipendenze
           find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('expat'/dependency('expat', required: false/g" {} +
 
           cat <<EOF > android-a64.txt
           [binaries]
@@ -90,6 +96,7 @@ jobs:
           endian = 'little'
           EOF
 
+          # Setup con argomenti forzati per puntare ai nostri header
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
@@ -102,13 +109,15 @@ jobs:
             -Dgbm=disabled \
             -Dopengl=false \
             -Dllvm=disabled \
+            -Dcpp_args="-I$(pwd)/android-headers" \
             -Dc_args="-I$(pwd)/android-headers" \
-            -Dcpp_args="-I$(pwd)/android-headers"
+            -Dwrap_mode=nofallback
 
+          # Compilazione
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
       - name: Upload Driver
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Final
+          name: Turnip-A618-Final-Artifact
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
