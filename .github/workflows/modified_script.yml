@@ -1,37 +1,93 @@
-name: Build Turnip A618 Termux Takeover
+name: Build Turnip A618 Final Survivor
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Questa immagine esiste, è pubblica e ha TUTTI i tool per compilare Mesa
-    container:
-      image: termux/package-builder:latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Prepare Environment
+      - name: Install Build Tools
         run: |
-          # Installiamo solo le utility mancanti (il grosso è già nel container)
-          apt-get update
-          apt-get install -y python3-pip python3-mako python3-yaml ninja-build pkg-config
-          pip3 install --upgrade meson
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-pip python3-setuptools python3-mako python3-yaml \
+            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools \
+            gettext git pkg-config
 
-      - name: Fake Android System Headers
+      - name: Update Meson
         run: |
-          # Termux ha le sue librerie in percorsi strani. 
-          # Creiamo uno stub ultra-veloce per i requisiti minimi di Mesa.
+          pip3 install --user --upgrade meson
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+
+      - name: Manual Header Reconstruction
+        run: |
+          # Creiamo la struttura che Mesa vuole vedere
+          mkdir -p android-headers/android
+          mkdir -p android-headers/hardware
+          mkdir -p android-headers/libdrm
+          mkdir -p android-headers/sync
+
+          # Scarichiamo libdrm per gli header reali
+          git clone --depth 1 https://gitlab.freedesktop.org/mesa/drm.git libdrm-source
+          cp -r libdrm-source/*.h android-headers/ || true
+          cp -r libdrm-source/include/drm/*.h android-headers/libdrm/ || true
+
+          # CREIAMO GLI HEADER ANDROID MANCANTI (I famosi file che cercavamo)
+          # Invece di scaricare GB di roba, creiamo quelli che servono a Turnip
+          
+          # 1. gralloc.h
+          cat <<EOF > android-headers/hardware/gralloc.h
+          #ifndef HARDWARE_GRALLOC_H
+          #define HARDWARE_GRALLOC_H
+          #include <stdint.h>
+          #include <system/window.h>
+          struct gralloc_module_t { int common; };
+          #endif
+          EOF
+
+          # 2. window.h (Minimale)
+          mkdir -p android-headers/system
+          cat <<EOF > android-headers/system/window.h
+          #ifndef SYSTEM_WINDOW_H
+          #define SYSTEM_WINDOW_H
+          #include <stdint.h>
+          typedef struct native_handle { int version; int numFds; int numInts; int data[0]; } native_handle_t;
+          typedef const native_handle_t* buffer_handle_t;
+          #endif
+          EOF
+
+          # 3. sync.h
+          cat <<EOF > android-headers/sync/sync.h
+          #ifndef SYNC_H
+          #define SYNC_H
+          #include <unistd.h>
+          static inline int sync_wait(int fd, int timeout) { return 0; }
+          #endif
+          EOF
+
+          # Copiamo i puntatori per Mesa
+          cp android-headers/system/window.h android-headers/android/ || true
+          touch android-headers/android/native_window.h
+
+      - name: Create Pkg-Config Stubs
+        run: |
           mkdir -p stubs/pkgconfig
-          for lib in cutils hardware sync log nativewindow android; do
+          for lib in cutils libcutils hardware libhardware sync libsync log liblog nativewindow android expat zlib libdrm; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
-          Description: Termux Fake Android
-          Version: 33
+          Description: Stub for ${lib}
+          Version: 99
           Libs: -lc
-          Cflags: -I/usr/include
+          Cflags: -I$(pwd)/android-headers
           EOF
           done
 
@@ -39,16 +95,14 @@ jobs:
         run: |
           export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
           
-          # Creiamo un cross-file che usa il compilatore interno del container
-          # N.B. In questo container il target è aarch64-linux-android
-          cat <<EOF > termux-a64.txt
+          # Cross-file per l'NDK
+          cat <<EOF > android-a64.txt
           [binaries]
-          c = 'aarch64-linux-android-clang'
-          cpp = 'aarch64-linux-android-clang++'
-          ar = 'llvm-ar'
-          strip = 'llvm-strip'
-          pkgconfig = 'pkg-config'
-
+          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
+          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
+          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
@@ -56,10 +110,8 @@ jobs:
           endian = 'little'
           EOF
 
-          # Patch per rendere tutto opzionale
-          find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
-
-          meson setup build_android --cross-file termux-a64.txt \
+          # Setup Mesa (Forziamo gli include)
+          meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=msm,kgsl \
@@ -71,13 +123,14 @@ jobs:
             -Dgbm=disabled \
             -Dopengl=false \
             -Dllvm=disabled \
+            -Dc_args="-I$(pwd)/android-headers -I$(pwd)/android-headers/libdrm" \
+            -Dcpp_args="-I$(pwd)/android-headers -I$(pwd)/android-headers/libdrm" \
             -Dwrap_mode=nofallback
 
-          # Compiliamo solo il driver vulkan
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
-      - name: Upload Result
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Termux-Build
+          name: Turnip-A618-Final-Survivor
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
