@@ -1,62 +1,53 @@
-name: Build Turnip A618 Docker Takeover
+name: Build Turnip A618 Termux Takeover
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Usiamo un'immagine professionale per lo sviluppo Android (Android SDK + NDK)
+    # Questa immagine esiste, è pubblica e ha TUTTI i tool per compilare Mesa
     container:
-      image: mingchen/android-build:latest
+      image: termux/package-builder:latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Build Tools
+      - name: Prepare Environment
         run: |
-          apt-get update && apt-get install -y \
-            python3-pip python3-setuptools python3-mako python3-yaml \
-            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools \
-            gettext git meson pkg-config
+          # Installiamo solo le utility mancanti (il grosso è già nel container)
+          apt-get update
+          apt-get install -y python3-pip python3-mako python3-yaml ninja-build pkg-config
+          pip3 install --upgrade meson
 
-      - name: Locate NDK & Libraries
+      - name: Fake Android System Headers
         run: |
-          # Individuiamo dove Android tiene i suoi header in questo container
-          # Solitamente: /opt/android-sdk/ndk/<versione>/sysroot
-          export NDK_PATH=$(find /opt -name "ndk" -type d | head -n 1)
-          echo "NDK_FOUND=$NDK_PATH" >> $GITHUB_ENV
-
-      - name: Create Pkg-Config for Android OS
-        run: |
+          # Termux ha le sue librerie in percorsi strani. 
+          # Creiamo uno stub ultra-veloce per i requisiti minimi di Mesa.
           mkdir -p stubs/pkgconfig
-          # In un ambiente Android reale, gralloc e cutils sono "fantasmi" 
-          # che Mesa deve linkare. Creiamo gli stub per fargli saltare il controllo.
-          for lib in cutils hardware sync log nativewindow libdrm expat zlib; do
+          for lib in cutils hardware sync log nativewindow android; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
-          Description: Android System Library
+          Description: Termux Fake Android
           Version: 33
           Libs: -lc
           Cflags: -I/usr/include
           EOF
           done
 
-      - name: Configure Mesa
+      - name: Configure and Build
         run: |
-          # Troviamo il compilatore clang specifico per Android nel container
-          CLANG_PATH=$(find /opt -name "aarch64-linux-android33-clang" | head -n 1)
+          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
           
-          cat <<EOF > android-a64.txt
+          # Creiamo un cross-file che usa il compilatore interno del container
+          # N.B. In questo container il target è aarch64-linux-android
+          cat <<EOF > termux-a64.txt
           [binaries]
-          c = '$CLANG_PATH'
-          cpp = '${CLANG_PATH}++'
+          c = 'aarch64-linux-android-clang'
+          cpp = 'aarch64-linux-android-clang++'
           ar = 'llvm-ar'
           strip = 'llvm-strip'
-          pkgconfig = '/usr/bin/pkg-config'
-
-          [properties]
-          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
+          pkgconfig = 'pkg-config'
 
           [host_machine]
           system = 'android'
@@ -65,25 +56,28 @@ jobs:
           endian = 'little'
           EOF
 
-          # Patch per ignorare gralloc se manca
+          # Patch per rendere tutto opzionale
           find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
 
-          meson setup build_android --cross-file android-a64.txt \
+          meson setup build_android --cross-file termux-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=msm,kgsl \
             -Dgallium-drivers="" \
             -Dbuildtype=release \
             -Dandroid-libbacktrace=disabled \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
             -Dllvm=disabled \
             -Dwrap_mode=nofallback
 
-      - name: Build
-        run: |
+          # Compiliamo solo il driver vulkan
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
-      - name: Upload
+      - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Docker-Takeover
+          name: Turnip-A618-Termux-Build
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
