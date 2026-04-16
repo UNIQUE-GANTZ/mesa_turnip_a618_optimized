@@ -54,7 +54,7 @@ jobs:
 
           # 2. Creiamo i file .pc per TUTTO il possibile
           mkdir -p stubs/pkgconfig
-          for lib in libcutils libhardware libsync sync liblog log libbacktrace libunwind zlib libelf; do
+          for lib in libcutils libhardware libsync sync liblog log libbacktrace libunwind zlib libelf libnativewindow; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
           Description: Android ${lib} stub
