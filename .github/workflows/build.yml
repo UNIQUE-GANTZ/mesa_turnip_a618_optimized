@@ -1,18 +1,4 @@
-    -Dvulkan-drivers=freedreno \
-    -Dgallium-drivers="" \
-    -Dplatforms="" \
-    -Dfreedreno-kmds=msm,kgsl \
-    -Dglx=disabled \
-    -Degl=disabled \
-    -Dgbm=disabled \
-    -Dopengl=false \
-    -Dgles1=disabled \
-    -Dgles2=disabled \
-    -Dllvm=disabled \
-    -Dbuildtype=release \
-    -Db_lto=false \
-    -Db_ndebug=true \
-	name: Build Turnip A618
+name: Build Turnip A618
 on:
   workflow_dispatch:
 
