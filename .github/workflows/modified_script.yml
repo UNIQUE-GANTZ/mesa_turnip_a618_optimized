@@ -1,4 +1,4 @@
-name: Build Turnip A618 Final Fix
+name: Build Turnip A618 Ultimate Complete
 on:
   workflow_dispatch:
 
@@ -28,12 +28,14 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Nuclear Patch & Stubbing (Sintassi Corretta)
+      - name: Nuclear Patch & Stubbing (Full Environment)
         run: |
-          # 1. Creazione cartelle
-          mkdir -p stubs/include/android stubs/include/log stubs/include/cutils stubs/include/hardware stubs/include/sync stubs/include/libdrm stubs/include/udev
-          
-          # 2. Stub Header (Metodo ultra-sicuro con cat)
+          # 1. Creazione Gerarchia Cartelle
+          mkdir -p stubs/include/android stubs/include/log stubs/include/cutils \
+                   stubs/include/hardware stubs/include/sync stubs/include/libdrm \
+                   stubs/include/udev stubs/pkgconfig
+
+          # 2. Stub Header - Il "Cuore" per ingannare il compilatore
           cat <<'EOF' > stubs/include/cutils/native_handle.h
           #ifndef NATIVE_HANDLE_H
           #define NATIVE_HANDLE_H
@@ -44,12 +46,11 @@ jobs:
           cat <<'EOF' > stubs/include/android/log.h
           #ifndef ANDROID_LOG_H
           #define ANDROID_LOG_H
-          typedef enum android_LogPriority { ANDROID_LOG_UNKNOWN = 0, ANDROID_LOG_DEFAULT, ANDROID_LOG_VERBOSE, ANDROID_LOG_DEBUG, ANDROID_LOG_INFO, ANDROID_LOG_WARN, ANDROID_LOG_ERROR, ANDROID_LOG_FATAL, ANDROID_LOG_SILENT } android_LogPriority;
-          #define ALOGV(...) ((void)0)
-          #define ALOGD(...) ((void)0)
-          #define ALOGI(...) ((void)0)
-          #define ALOGW(...) ((void)0)
           #define ALOGE(...) ((void)0)
+          #define ALOGW(...) ((void)0)
+          #define ALOGI(...) ((void)0)
+          #define ALOGD(...) ((void)0)
+          #define ALOGV(...) ((void)0)
           #endif
           EOF
           cp stubs/include/android/log.h stubs/include/log/log.h
@@ -70,14 +71,31 @@ jobs:
           #endif
           EOF
 
+          cat <<'EOF' > stubs/include/hardware/hardware.h
+          #ifndef ANDROID_HARDWARE_H
+          #define ANDROID_HARDWARE_H
+          #include <stdint.h>
+          typedef struct hw_module_t { uint32_t tag; uint16_t module_api_version; } hw_module_t;
+          #endif
+          EOF
+
+          cat <<'EOF' > stubs/include/hardware/gralloc.h
+          #ifndef ANDROID_GRALLOC_H
+          #define ANDROID_GRALLOC_H
+          #include <hardware/hardware.h>
+          #define GRALLOC_USAGE_HW_RENDER 0x00000200
+          #endif
+          EOF
+
+          # File vuoti per headers secondari
           touch stubs/include/android/native_window.h
           touch stubs/include/android/configuration.h
-          touch stubs/include/hardware/hardware.h
           touch stubs/include/udev/libudev.h
 
-          # 3. PKG-CONFIG Finti
-          mkdir -p stubs/pkgconfig
-          for lib in cutils libcutils hardware libhardware sync libsync log liblog backtrace libbacktrace unwind libunwind zlib libelf nativewindow libnativewindow android libdrm vulkan libudev spirv-tools; do
+          # 3. PKG-CONFIG Finti - La lista definitiva
+          for lib in cutils libcutils hardware libhardware sync libsync log liblog \
+                     backtrace libbacktrace unwind libunwind zlib libelf \
+                     nativewindow libnativewindow android libdrm vulkan libudev spirv-tools; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
           Description: Android ${lib} stub
@@ -87,7 +105,7 @@ jobs:
           EOF
           done
 
-          # 4. Patch dei file Meson
+          # 4. Patch Meson - Disabilita l'obbligatorietà
           find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
 
       - name: Configure and Build
@@ -96,6 +114,7 @@ jobs:
           export CFLAGS="-I$(pwd)/stubs/include"
           export CPPFLAGS="-I$(pwd)/stubs/include"
 
+          # Creazione cross-file
           cat <<EOF > android-a64.txt
           [binaries]
           c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
@@ -113,6 +132,7 @@ jobs:
           endian = 'little'
           EOF
 
+          # Setup e Build
           rm -rf build_android
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
@@ -136,5 +156,5 @@ jobs:
       - name: Upload Driver
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Final
+          name: Turnip-A618-Final-Artifact
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
