@@ -72,4 +72,59 @@ jobs:
           done
 
           # 3. PATCH TOTALE: Rimuoviamo ogni "required: true" per queste dipendenze
-          # Cerchiamo tutte
+          # Cerchiamo tutte le varianti di sync e hardware e le rendiamo opzionali o rimosse
+          find . -name "meson.build" -exec sed -i "s/dependency('libsync'/dependency('libsync', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('sync'/dependency('sync', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('hardware'/dependency('hardware', required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('cutils'/dependency('cutils', required : false/g" {} +
+
+      - name: Configure and Build
+        run: |
+          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
+          # Forziamo l'inclusione dei nostri stub a livello di compilatore
+          export CFLAGS="-I$(pwd)/stubs/include"
+          export CPPFLAGS="-I$(pwd)/stubs/include"
+
+          cat <<EOF > android-a64.txt
+          [binaries]
+          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
+          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
+          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
+          glslangValidator = '/usr/bin/glslangValidator'
+
+          [properties]
+          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8-a'
+          endian = 'little'
+          EOF
+
+          meson setup build_android --cross-file android-a64.txt \
+            -Dplatforms=android \
+            -Dvulkan-drivers=freedreno \
+            -Dfreedreno-kmds=msm,kgsl \
+            -Dgallium-drivers="" \
+            -Dbuildtype=release \
+            -Dandroid-libbacktrace=disabled \
+            -Dandroid-strict=false \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            -Dllvm=disabled \
+            -Db_lto=false
+
+          ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turnip-A618-Driver-Final
+          path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
