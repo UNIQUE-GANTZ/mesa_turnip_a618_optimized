@@ -1,4 +1,4 @@
-name: Build Turnip A618 (Protocollo Estinzione)
+name: Build Turnip A618 Ultimate
 on:
   workflow_dispatch:
 
@@ -28,12 +28,11 @@ jobs:
           ndk-version: r26b
           add-to-path: false
 
-      - name: Massiccio Stubbing Preventivo
+      - name: Nuclear Patch & Stubbing
         run: |
-          # 1. Creiamo un set completo di header Android "finti"
-          mkdir -p stubs/include/android stubs/include/log stubs/include/cutils stubs/include/hardware stubs/include/sync stubs/include/system stubs/include/backtrace
+          # 1. Creazione Header Android Finti (per evitare 'file not found')
+          mkdir -p stubs/include/android stubs/include/log stubs/include/cutils stubs/include/hardware stubs/include/sync stubs/include/system
           
-          # Header Log
           cat <<EOF > stubs/include/android/log.h
           #ifndef ANDROID_LOG_H
           #define ANDROID_LOG_H
@@ -48,13 +47,14 @@ jobs:
           EOF
           cp stubs/include/android/log.h stubs/include/log/log.h
 
-          # Header Sync e Native Handle
           echo "#ifndef SYNC_H #define SYNC_H #include <unistd.h> static inline int sync_wait(int fd, int timeout) { return 0; } #endif" > stubs/include/sync/sync.h
           echo "typedef struct native_handle { int version; int numFds; int numInts; int data[0]; } native_handle_t;" > stubs/include/cutils/native_handle.h
+          touch stubs/include/android/native_window.h
+          touch stubs/include/android/configuration.h
 
-          # 2. Creiamo i file .pc per TUTTO il possibile
+          # 2. Creazione PKG-CONFIG Finti (per evitare 'Dependency not found')
           mkdir -p stubs/pkgconfig
-          for lib in libcutils libhardware libsync sync liblog log libbacktrace libunwind zlib libelf libnativewindow; do
+          for lib in libcutils libhardware libsync sync liblog log libbacktrace libunwind zlib libelf nativewindow libnativewindow android; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
           Description: Android ${lib} stub
@@ -64,9 +64,9 @@ jobs:
           EOF
           done
 
-          # 3. PATCH TOTALE DEI MESON.BUILD
-          # Rendiamo TUTTE queste dipendenze non obbligatorie ovunque siano citate
-          find . -name "meson.build" -exec sed -i "s/dependency('\(cutils\|hardware\|sync\|libsync\|log\|liblog\|libbacktrace\|libunwind\|zlib\|libelf\)'/dependency('\1', required : false/g" {} +
+          # 3. Patch dei file Meson (Rende tutto NON obbligatorio)
+          find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
+          find . -name "meson.build" -exec sed -i "s/dependency('\([^']*\)'/dependency('\1', required : false/g" {} +
 
       - name: Configure and Build
         run: |
@@ -74,6 +74,7 @@ jobs:
           export CFLAGS="-I$(pwd)/stubs/include"
           export CPPFLAGS="-I$(pwd)/stubs/include"
 
+          # Creazione cross-file per Android ARM64
           cat <<EOF > android-a64.txt
           [binaries]
           c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
@@ -93,6 +94,7 @@ jobs:
           endian = 'little'
           EOF
 
+          # Setup Meson
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
@@ -110,10 +112,11 @@ jobs:
             -Dllvm=disabled \
             -Db_lto=false
 
+          # Compilazione finale
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
-      - name: Upload Artifact
+      - name: Upload Driver Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Full-Extermination
+          name: Turnip-A618-Driver
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
