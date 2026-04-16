@@ -1,24 +1,22 @@
-name: Build Turnip A618 via Docker
+name: Build Turnip A618 Docker Fixed
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Qui carichiamo il computer virtuale con tutto il necessario per Android
     container:
-      image: registry.freedesktop.org/mesa/mesa/debian/android_build:2024-06-03-virgl
+      # Questa immagine è specifica per compilare Turnip/Mesa per Android
+      image: k11mch1/mesa-android-build:latest 
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure and Build with Meson
+      - name: Configure and Build
         run: |
-          # 1. Definiamo i percorsi del NDK già presente nel container
-          # Solitamente in queste immagini l'NDK è sotto /android-ndk o definito in variabili d'ambiente
-          
-          # 2. Creiamo un cross-file rapido che punta agli strumenti del container
+          # In questa immagine, l'NDK è già configurato nel PATH
+          # Creiamo il cross-file minimale
           cat <<EOF > docker-android-a64.txt
           [binaries]
           c = 'aarch64-linux-android33-clang'
@@ -34,7 +32,8 @@ jobs:
           endian = 'little'
           EOF
 
-          # 3. Setup (Senza bisogno di stub, le librerie sono nel sistema del container)
+          # Setup Meson
+          # Nota: In Docker spesso non serve specificare tutto perché l'ambiente è già pronto
           meson setup build_android --cross-file docker-android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
@@ -46,16 +45,12 @@ jobs:
             -Degl=disabled \
             -Dgbm=disabled \
             -Dopengl=false \
-            -Dgles1=disabled \
-            -Dgles2=disabled \
-            -Dllvm=disabled \
-            -Db_lto=false
+            -Dllvm=disabled
 
-          # 4. Compilazione
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Docker-Build
+          name: Turnip-A618-Docker-OK
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
