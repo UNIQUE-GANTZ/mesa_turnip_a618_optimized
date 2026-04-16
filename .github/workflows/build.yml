@@ -1,0 +1,63 @@
+name: Build Turnip Driver (A618)
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y meson ninja-build pkg-config python3-mako python3-pip python3-yaml libxml2-dev bison flex
+
+      - name: Setup Android NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r26b-linux.x86_64.zip
+          unzip -q android-ndk-r26b-linux.x86_64.zip
+          echo "NDK_PATH=$GITHUB_WORKSPACE/android-ndk-r26b" >> $GITHUB_ENV
+
+      - name: Configure Meson
+        run: |
+          # Creiamo il cross-file al volo
+          cat <<EOF > android-a64.txt
+          [binaries]
+          c = '$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
+          cpp = '$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
+          ar = '$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          pkgconfig = '/usr/bin/pkg-config'
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8-a'
+          endian = 'little'
+          EOF
+
+          meson setup build_android --cross-file android-a64.txt \
+            -Dvulkan-drivers=freedreno \
+            -Dgallium-drivers="" \
+            -Dplatforms="" \
+            -Dfreedreno-kmds=msm,kgsl \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            -Dllvm=disabled \
+            -Dbuildtype=release \
+            -Db_lto=false \
+            -Db_ndebug=true \
+
+      - name: Compile Driver
+        run: ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnip-driver-a618
+          path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
