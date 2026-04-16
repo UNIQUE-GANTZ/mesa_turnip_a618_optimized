@@ -1,64 +1,38 @@
-name: Build Turnip A618 Armageddon Final
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Install System Dependencies
+- name: Nuclear Patch & Stubbing (Cutils Force Fix)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3-pip python3-setuptools python3-mako python3-yaml \
-            libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools
-
-      - name: Update Meson
-        run: |
-          pip3 install --user --upgrade meson
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26b
-          add-to-path: false
-
-      - name: Nuclear Patch & Stubbing (Final Version)
-        run: |
-          # 1. Creazione cartelle per gli Header
+          # 1. Creazione cartelle (inclusi percorsi multipli per cutils)
           mkdir -p stubs/include/android stubs/include/log stubs/include/cutils stubs/include/hardware stubs/include/sync stubs/include/libdrm stubs/include/udev
           
-          # 2. Creazione file Header (Stub per evitare errori in compilazione)
-          cat <<EOF > stubs/include/android/log.h
-          #ifndef ANDROID_LOG_H
-          #define ANDROID_LOG_H
-          typedef enum android_LogPriority { ANDROID_LOG_UNKNOWN = 0, ANDROID_LOG_DEFAULT, ANDROID_LOG_VERBOSE, ANDROID_LOG_DEBUG, ANDROID_LOG_INFO, ANDROID_LOG_WARN, ANDROID_LOG_ERROR, ANDROID_LOG_FATAL, ANDROID_LOG_SILENT } android_LogPriority;
-          #define ALOGV(...) ((void)0)
-          #define ALOGD(...) ((void)0)
-          #define ALOGI(...) ((void)0)
-          #define ALOGW(...) ((void)0)
-          #define ALOGE(...) ((void)0)
-          #define android_printLog(...) (0)
+          # 2. Stub Header - FORZIAMO CUTILS
+          cat <<EOF > stubs/include/cutils/native_handle.h
+          #ifndef NATIVE_HANDLE_H
+          #define NATIVE_HANDLE_H
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          typedef struct native_handle {
+              int version;        /* sizeof(native_handle_t) */
+              int numFds;         /* number of file-descriptors at &data[0] */
+              int numInts;        /* number of ints at &data[numFds] */
+              int data[0];        /* numFds + numInts ints */
+          } native_handle_t;
+          #ifdef __cplusplus
+          }
+          #endif
           #endif
           EOF
-          cp stubs/include/android/log.h stubs/include/log/log.h
 
+          # Altri header necessari
           echo "#ifndef SYNC_H #define SYNC_H #include <unistd.h> static inline int sync_wait(int fd, int timeout) { return 0; } #endif" > stubs/include/sync/sync.h
-          echo "typedef struct native_handle { int version; int numFds; int numInts; int data[0]; } native_handle_t;" > stubs/include/cutils/native_handle.h
           echo "#ifndef _DRM_H_ #define _DRM_H_ #include <stdint.h> typedef unsigned int drm_handle_t; #endif" > stubs/include/libdrm/drm.h
           touch stubs/include/android/native_window.h
-          touch stubs/include/android/configuration.h
           touch stubs/include/hardware/hardware.h
           touch stubs/include/udev/libudev.h
 
-          # 3. Creazione file PKG-CONFIG (Il trucco per far dire YES a Meson)
+          # 3. Creazione file PKG-CONFIG (Raddoppiamo i nomi per sicurezza)
           mkdir -p stubs/pkgconfig
-          for lib in libcutils libhardware libsync sync liblog log libbacktrace libunwind zlib libelf nativewindow libnativewindow android libdrm vulkan libudev spirv-tools; do
+          # Ho aggiunto sia 'cutils' che 'libcutils'
+          for lib in cutils libcutils hardware libhardware sync libsync log liblog backtrace libbacktrace unwind libunwind zlib libelf nativewindow libnativewindow android libdrm vulkan libudev spirv-tools; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
           Description: Android ${lib} stub
@@ -68,58 +42,5 @@ jobs:
           EOF
           done
 
-          # 4. Patch dei file Meson (Rende tutto NON obbligatorio senza rompere la sintassi)
+          # 4. Patch dei file Meson (Ancora più aggressiva)
           find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
-
-      - name: Configure and Build
-        run: |
-          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
-          export CFLAGS="-I$(pwd)/stubs/include"
-          export CPPFLAGS="-I$(pwd)/stubs/include"
-
-          # File di cross-compilazione
-          cat <<EOF > android-a64.txt
-          [binaries]
-          c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
-          cpp = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++'
-          ar = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          strip = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-          pkgconfig = '/usr/bin/pkg-config'
-          glslangValidator = '/usr/bin/glslangValidator'
-
-          [properties]
-          pkg_config_libdir = '$(pwd)/stubs/pkgconfig'
-
-          [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'armv8-a'
-          endian = 'little'
-          EOF
-
-          # Setup Meson
-          meson setup build_android --cross-file android-a64.txt \
-            -Dplatforms=android \
-            -Dvulkan-drivers=freedreno \
-            -Dfreedreno-kmds=msm,kgsl \
-            -Dgallium-drivers="" \
-            -Dbuildtype=release \
-            -Dandroid-libbacktrace=disabled \
-            -Dandroid-strict=false \
-            -Dglx=disabled \
-            -Degl=disabled \
-            -Dgbm=disabled \
-            -Dopengl=false \
-            -Dgles1=disabled \
-            -Dgles2=disabled \
-            -Dllvm=disabled \
-            -Db_lto=false
-
-          # Ninja Build
-          ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
-
-      - name: Upload Driver
-        uses: actions/upload-artifact@v4
-        with:
-          name: Turnip-A618-Armageddon-Final
-          path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
