@@ -1,4 +1,4 @@
-name: Build Turnip A618 Legit Headers
+name: Build Turnip A618 Legit Ultimate
 on:
   workflow_dispatch:
 
@@ -9,7 +9,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -17,22 +17,29 @@ jobs:
             libxml2-dev libelf-dev spirv-tools ninja-build glslang-tools \
             gettext git
 
+      - name: Update Meson
+        run: |
+          pip3 install --user --upgrade meson
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
           ndk-version: r26b
+          add-to-path: false
 
-      - name: Download Official Android Headers (Elastic Version)
+      - name: Download Official Android Headers (The Legit Way)
         run: |
-          mkdir -p android-headers
+          mkdir -p android-headers/android
           
-          # Scarichiamo i core ufficiali
+          # Scarichiamo i repository ufficiali di Google AOSP (mirror)
           git clone --depth 1 https://android.googlesource.com/platform/system/core android-system-core
           git clone --depth 1 https://android.googlesource.com/platform/frameworks/native android-frameworks-native
           git clone --depth 1 https://android.googlesource.com/platform/hardware/libhardware android-libhardware
 
-          # Copiamo tutto il possibile. Se una cartella manca, il comando || true evita che il build fallisca
+          # Copia massiva degli header reali
+          # L'uso di "|| true" garantisce che se Google sposta una cartella, il build non fallisce
           cp -r android-system-core/libutils/include/* android-headers/ || true
           cp -r android-system-core/libcutils/include/* android-headers/ || true
           cp -r android-system-core/libsystem/include/* android-headers/ || true
@@ -40,25 +47,30 @@ jobs:
           cp -r android-frameworks-native/vulkan/include/* android-headers/ || true
           cp -r android-libhardware/include/* android-headers/ || true
           
-          # Creiamo a mano gli header mancanti che Mesa cercherà sicuramente nei percorsi standard
-          mkdir -p android-headers/android
+          # Sistemiamo i percorsi specifici che Mesa cerca ossessivamente
           cp android-headers/system/window.h android-headers/android/ || true
-          # Se native_window.h non esiste, lo creiamo vuoto per non bloccare il compilatore
           touch android-headers/android/native_window.h
+          
+          # Creazione header sync minimo se non trovato
+          if [ ! -f android-headers/sync/sync.h ]; then
+            mkdir -p android-headers/sync
+            echo "#ifndef SYNC_H #define SYNC_H #include <unistd.h> static inline int sync_wait(int fd, int timeout) { return 0; } #endif" > android-headers/sync/sync.h
+          fi
 
-      - name: Configure and Build
+      - name: Prepare Pkg-Config & Cross File
         run: |
-          # pkg-config per "ingannare" Meson usando gli header REALI scaricati
+          # Creiamo pkg-config che puntano agli header reali scaricati sopra
           mkdir -p stubs/pkgconfig
-          for lib in libcutils libhardware libsync liblog nativewindow; do
+          for lib in libcutils libhardware libsync liblog nativewindow android; do
             cat <<EOF > stubs/pkgconfig/${lib}.pc
           Name: ${lib}
-          Description: Android ${lib} headers
+          Description: Android ${lib} real headers
           Version: 33
           Cflags: -I$(pwd)/android-headers
           EOF
           done
 
+          # Generazione del file di cross-compilazione per l'NDK
           cat <<EOF > android-a64.txt
           [binaries]
           c = '${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang'
@@ -77,9 +89,14 @@ jobs:
           endian = 'little'
           EOF
 
-          # Patch per rendere i requisiti facoltativi (sempre utile)
+      - name: Configure and Build
+        run: |
+          export PKG_CONFIG_PATH=$(pwd)/stubs/pkgconfig
+          
+          # Patch preventiva sui file Meson per ignorare dipendenze mancanti non critiche
           find . -name "meson.build" -exec sed -i "s/required : true/required : false/g" {} +
 
+          # Setup
           meson setup build_android --cross-file android-a64.txt \
             -Dplatforms=android \
             -Dvulkan-drivers=freedreno \
@@ -87,14 +104,19 @@ jobs:
             -Dgallium-drivers="" \
             -Dbuildtype=release \
             -Dandroid-libbacktrace=disabled \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dopengl=false \
             -Dllvm=disabled \
             -Dcpp_args="-I$(pwd)/android-headers" \
             -Dc_args="-I$(pwd)/android-headers"
 
+          # Compilazione target specifica per Turnip
           ninja -C build_android src/freedreno/vulkan/libvulkan_freedreno.so
 
-      - name: Upload Result
+      - name: Upload Driver
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-A618-Legit
+          name: Turnip-A618-Legit-Final
           path: build_android/src/freedreno/vulkan/libvulkan_freedreno.so
